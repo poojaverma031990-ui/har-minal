@@ -1,0 +1,88 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node (Version 22)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install website things
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Auto-Fix All Files (Cleans and writes configs automatically)
+        run: |
+          # 1. Automatically delete the broken session-view file so it doesn't crash the website builder
+          rm -f components/session-view.tsx
+          
+          # 2. Automatically write the perfect Next.js configuration for exporting files
+          rm -f next.config.js next.config.ts next.config.mjs
+          cat << 'EOF' > next.config.mjs
+          /** @type {import('next').NextConfig} */
+          const nextConfig = {
+            output: 'export',
+            images: {
+              unoptimized: true,
+            },
+          };
+          export default nextConfig;
+          EOF
+
+          # 3. Automatically write the perfect Capacitor configuration so the builder finds the "out" folder
+          rm -f capacitor.config.json
+          cat << 'EOF' > capacitor.config.json
+          {
+            "appId": "com.harminal.app",
+            "appName": "har.minal",
+            "webDir": "out"
+          }
+          EOF
+
+      - name: Install App Maker tools
+        run: pnpm add -D @capacitor/cli && pnpm add @capacitor/core @capacitor/android
+
+      - name: Export website
+        run: pnpm build
+
+      - name: Add Android App folder
+        run: npx cap add android
+
+      - name: Sync website to Android App
+        run: npx cap sync android
+
+      - name: Make Gradle executable
+        run: chmod +x android/gradlew
+
+      - name: Build APK file
+        run: |
+          cd android
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: har-minal-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
