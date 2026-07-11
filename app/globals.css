@@ -5,6 +5,16 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --font-mono: var(--font-mono), ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  --color-term-bg: var(--term-bg);
+  --color-term-fg: var(--term-fg);
+  --color-term-green: var(--term-green);
+  --color-term-blue: var(--term-blue);
+  --color-term-yellow: var(--term-yellow);
+  --color-term-red: var(--term-red);
+  --color-term-dim: var(--term-dim);
+  --color-term-key: var(--term-key);
+  --color-term-key-active: var(--term-key-active);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -46,7 +56,16 @@
 }
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
+  --term-bg: #000000;
+  --term-fg: #e6e6e6;
+  --term-green: #26e07f;
+  --term-blue: #4aa8ff;
+  --term-yellow: #f4d35e;
+  --term-red: #ff5c57;
+  --term-dim: #7a869a;
+  --term-key: #1c2430;
+  --term-key-active: #2f3d4f;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
