@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Shell, bannerLines, type Line, type Segment } from '@/lib/shell'
+import { Shell, type Line, type Segment } from '@/lib/shell'
 import { ExtraKeys, type SpecialKey } from '@/components/extra-keys'
 
 const colorClass: Record<NonNullable<Segment['color']>, string> = {
@@ -41,11 +41,7 @@ function renderLine(line: Line, key: number) {
 function Prompt({ data }: { data: PromptData }) {
   return (
     <span className="select-none">
-      <span className="font-bold text-term-green">{data.user}</span>
-      <span className="text-term-dim">@</span>
-      <span className="font-bold text-term-green">{data.host}</span>
-      <span className="text-term-fg"> </span>
-      <span className="font-bold text-term-blue">{data.cwd}</span>
+      <span className="font-bold text-term-green">{data.cwd}</span>
       <span className="text-term-fg"> $ </span>
     </span>
   )
@@ -58,23 +54,37 @@ export function Terminal() {
 
   const initialBlocks = useMemo<Block[]>(
     () => [
-      { kind: 'output', lines: bannerLines() },
       {
         kind: 'output',
         lines: [
-          [],
-          [{ text: 'Welcome to har.minal', color: 'green', bold: true }],
-          [{ text: 'Your own terminal for Android — a Termux-style workspace.', color: 'fg' }],
+          [
+            { text: 'Welcome to ', color: 'fg' },
+            { text: 'har.minal', color: 'green', bold: true },
+            { text: '!', color: 'fg' },
+          ],
           [],
           [
-            { text: 'Community forum:  ', color: 'dim' },
+            { text: 'Community forum: ', color: 'fg' },
             { text: 'https://harminal.dev/community', color: 'blue' },
           ],
           [
-            { text: 'Working with packages:', color: 'dim' },
-            { text: ' pkg install <name>', color: 'fg' },
+            { text: 'Gitter chat:     ', color: 'fg' },
+            { text: 'https://gitter.im/harminal/harminal', color: 'blue' },
           ],
-          [{ text: "Type 'help' for a list of commands.", color: 'dim' }],
+          [],
+          [{ text: 'Working with packages:', color: 'fg' }],
+          [{ text: ' - Search:  pkg search <query>', color: 'fg' }],
+          [{ text: ' - Install: pkg install <package>', color: 'fg' }],
+          [{ text: ' - Upgrade: pkg upgrade', color: 'fg' }],
+          [],
+          [{ text: 'Subscribing to additional repositories:', color: 'fg' }],
+          [{ text: ' - Root:    pkg install root-repo', color: 'fg' }],
+          [{ text: ' - X11:     pkg install x11-repo', color: 'fg' }],
+          [],
+          [
+            { text: 'Report issues at ', color: 'fg' },
+            { text: 'https://harminal.dev/issues', color: 'blue' },
+          ],
           [],
         ],
       },
@@ -318,15 +328,6 @@ export function Terminal() {
 
   return (
     <div className="flex h-[100dvh] flex-col bg-term-bg text-term-fg">
-      {/* Title bar */}
-      <header className="flex items-center justify-between border-b border-white/10 bg-black px-3 py-2">
-        <div className="flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-term-green" aria-hidden />
-          <h1 className="text-sm font-bold tracking-tight text-term-fg">har.minal</h1>
-        </div>
-        <span className="text-xs text-term-dim">{prompt.user}@localhost</span>
-      </header>
-
       {/* Terminal output */}
       <div
         ref={scrollRef}
