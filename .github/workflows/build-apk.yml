@@ -1,0 +1,74 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install website things
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Create static export configuration (Auto-Fix)
+        run: |
+          rm -f next.config.js next.config.ts next.config.mjs
+          cat << 'EOF' > next.config.mjs
+          /** @type {import('next').NextConfig} */
+          const nextConfig = {
+            output: 'export',
+            images: {
+              unoptimized: true,
+            },
+          };
+          export default nextConfig;
+          EOF
+
+      - name: Install App Maker tools
+        run: pnpm add -D @capacitor/cli && pnpm add @capacitor/core @capacitor/android
+
+      - name: Export website
+        run: pnpm build
+
+      - name: Add Android App folder
+        run: npx cap add android
+
+      - name: Sync website to Android App
+        run: npx cap sync android
+
+      - name: Make Gradle executable
+        run: chmod +x android/gradlew
+
+      - name: Build APK file
+        run: |
+          cd android
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: har-minal-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
