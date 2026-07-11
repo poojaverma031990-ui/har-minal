@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from 'lucide-react'
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Menu } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 export type SpecialKey =
@@ -23,6 +23,7 @@ type Props = {
   onKey: (key: SpecialKey) => void
   ctrlActive: boolean
   altActive: boolean
+  onMenu?: () => void
 }
 
 function Key({

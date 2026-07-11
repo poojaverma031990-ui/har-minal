@@ -25,7 +25,10 @@ export type ExecResult = {
   lines: Line[]
   clear?: boolean
   exit?: boolean
+  editor?: { path: string; content: string }
 }
+
+const FS_KEY = 'harminal.fs.v1'
 
 export const USER = 'harsh'
 export const HOST = 'localhost'
@@ -92,6 +95,20 @@ function makeFs(): DirNode {
   }
 }
 
+function loadFs(): DirNode {
+  if (typeof window === 'undefined') return makeFs()
+  try {
+    const raw = window.localStorage.getItem(FS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as DirNode
+      if (parsed && parsed.type === 'dir') return parsed
+    }
+  } catch {
+    // ignore corrupt storage
+  }
+  return makeFs()
+}
+
 export const HOME = '/data/data/com.harminal/files/home'
 
 export class Shell {
@@ -102,7 +119,7 @@ export class Shell {
   installed: Set<string>
 
   constructor() {
-    this.fs = makeFs()
+    this.fs = loadFs()
     this.cwd = HOME
     this.env = {
       USER,
@@ -163,8 +180,30 @@ export class Shell {
     return this.cwd
   }
 
+  save() {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(FS_KEY, JSON.stringify(this.fs))
+    } catch {
+      // storage full or unavailable — ignore
+    }
+  }
+
+  // Write content to a file path, creating it if needed. Returns true on success.
+  writeFile(path: string, content: string): boolean {
+    const info = this.getParent(path)
+    if (!info) return false
+    const existing = info.parent.children[info.name]
+    if (existing && existing.type === 'dir') return false
+    info.parent.children[info.name] = { type: 'file', content }
+    this.save()
+    return true
+  }
+
   // ----- executor -----
   exec(raw: string): ExecResult {
+    // Reload the shared filesystem so changes made in other sessions are visible.
+    this.fs = loadFs()
     const input = raw.trim()
     if (input) this.history.push(input)
     if (!input) return { lines: [] }
@@ -174,6 +213,7 @@ export class Shell {
     let out: Line[] = []
     let clear = false
     let exit = false
+    let editor: ExecResult['editor'] | undefined
     for (const cmd of commands) {
       const r = this.runOne(cmd)
       if (r.clear) {
@@ -182,8 +222,10 @@ export class Shell {
       }
       out = out.concat(r.lines)
       if (r.exit) exit = true
+      if (r.editor) editor = r.editor
     }
-    return { lines: out, clear, exit }
+    this.save()
+    return { lines: out, clear, exit, editor }
   }
 
   private runOne(cmd: string): ExecResult {
@@ -239,14 +281,17 @@ export class Shell {
         this.text('har.minal — available commands', 'green', true),
         this.text(''),
         ...this.lines([
-          'File system : ls  cd  pwd  cat  mkdir  touch  rm  cp  mv  tree  echo',
-          'Text        : head  tail  grep  wc  clear',
-          'System      : whoami  hostname  uname  id  date  uptime  env  export',
-          'Packages    : pkg  apt  pip',
-          'Fun         : neofetch  banner  fortune  cowsay  history  help  exit',
+          'Files    : ls  cd  pwd  cat  mkdir  touch  rm  cp  mv  tree  find  echo',
+          'Text     : head  tail  grep  wc  sort  uniq  rev  sed  nano  vi',
+          'System   : whoami  id  uname  date  uptime  env  export  ps  top  df  free  cal',
+          'Utils    : seq  expr  printf  yes  which  basename  dirname  sleep  man',
+          'Scripts  : sh  bash  chmod',
+          'Packages : pkg  apt  pip',
+          'Fun      : neofetch  banner  fortune  cowsay  history  clear  reset  exit',
         ]),
         this.text(''),
         this.text('Tip: use the extra-keys row for ESC, CTRL, TAB and arrows.', 'dim'),
+        this.text('Tip: swipe from the left edge to manage sessions.', 'dim'),
       ],
     }),
 
@@ -514,6 +559,254 @@ export class Shell {
       return { lines: out }
     },
 
+    nano: (args) => this.openEditor(args),
+    vi: (args) => this.openEditor(args),
+    vim: (args) => this.openEditor(args),
+
+    which: (args) => {
+      const names = Object.keys(this.commands)
+      const out: Line[] = []
+      for (const a of args) {
+        if (names.includes(a) || a === 'll' || a === 'la')
+          out.push(this.text(`${this.env.PREFIX}/bin/${a}`))
+        else out.push(this.text(`which: no ${a} in (${this.env.PATH})`, 'red'))
+      }
+      return { lines: out }
+    },
+
+    basename: (args) => {
+      if (!args[0]) return { lines: [] }
+      const parts = args[0].replace(/\/+$/, '').split('/')
+      return { lines: [this.text(parts[parts.length - 1] || '/')] }
+    },
+
+    dirname: (args) => {
+      if (!args[0]) return { lines: [] }
+      const parts = args[0].replace(/\/+$/, '').split('/')
+      parts.pop()
+      return { lines: [this.text(parts.join('/') || '.')] }
+    },
+
+    sleep: () => ({ lines: [] }),
+
+    seq: (args) => {
+      const nums = args.map(Number).filter((n) => !Number.isNaN(n))
+      let start = 1
+      let end = 0
+      let step = 1
+      if (nums.length === 1) end = nums[0]
+      else if (nums.length === 2) [start, end] = nums
+      else if (nums.length >= 3) [start, step, end] = nums
+      const out: Line[] = []
+      if (step === 0) return { lines: [this.text('seq: step cannot be 0', 'red')] }
+      for (let i = start; step > 0 ? i <= end : i >= end; i += step)
+        out.push(this.text(String(i)))
+      return { lines: out }
+    },
+
+    sort: (args) => {
+      const reverse = args.some((a) => a.startsWith('-') && a.includes('r'))
+      const p = args.find((a) => !a.startsWith('-'))
+      if (!p) return { lines: [] }
+      const node = this.getNode(p)
+      if (!node || node.type !== 'file')
+        return { lines: [this.text(`sort: cannot read: ${p}`, 'red')] }
+      let ls = node.content.replace(/\n$/, '').split('\n').sort()
+      if (reverse) ls = ls.reverse()
+      return { lines: ls.map((l) => this.text(l)) }
+    },
+
+    uniq: (args) => {
+      const p = args.find((a) => !a.startsWith('-'))
+      if (!p) return { lines: [] }
+      const node = this.getNode(p)
+      if (!node || node.type !== 'file')
+        return { lines: [this.text(`uniq: ${p}: No such file`, 'red')] }
+      const ls = node.content.replace(/\n$/, '').split('\n')
+      const out: Line[] = []
+      let prev: string | null = null
+      for (const l of ls) {
+        if (l !== prev) out.push(this.text(l))
+        prev = l
+      }
+      return { lines: out }
+    },
+
+    rev: (args) => {
+      const p = args.find((a) => !a.startsWith('-'))
+      if (!p) return { lines: [] }
+      const node = this.getNode(p)
+      if (!node || node.type !== 'file')
+        return { lines: [this.text(`rev: cannot open ${p}`, 'red')] }
+      return {
+        lines: node.content
+          .replace(/\n$/, '')
+          .split('\n')
+          .map((l) => this.text(l.split('').reverse().join(''))),
+      }
+    },
+
+    sed: (args) => {
+      const script = args.find((a) => a.startsWith('s'))
+      const p = args.find((a) => !a.startsWith('-') && a !== script)
+      if (!script || !p) return { lines: [this.text("usage: sed 's/old/new/[g]' FILE", 'red')] }
+      const m = script.match(/^s\/(.*?)\/(.*?)\/(g?)$/)
+      if (!m) return { lines: [this.text('sed: unsupported expression', 'red')] }
+      const node = this.getNode(p)
+      if (!node || node.type !== 'file')
+        return { lines: [this.text(`sed: can't read ${p}`, 'red')] }
+      const [, pat, rep, g] = m
+      const re = new RegExp(pat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), g ? 'g' : '')
+      return {
+        lines: node.content
+          .replace(/\n$/, '')
+          .split('\n')
+          .map((l) => this.text(l.replace(re, rep))),
+      }
+    },
+
+    find: (args) => {
+      const start = args[0] && !args[0].startsWith('-') ? args[0] : '.'
+      const nameIdx = args.indexOf('-name')
+      const pattern = nameIdx >= 0 ? args[nameIdx + 1]?.replace(/\*/g, '') : null
+      const node = this.getNode(start)
+      if (!node) return { lines: [this.text(`find: '${start}': No such file or directory`, 'red')] }
+      const out: Line[] = []
+      const base = start === '.' ? '.' : start.replace(/\/$/, '')
+      const walk = (n: Node, path: string) => {
+        const name = path.split('/').pop() ?? ''
+        if (!pattern || name.includes(pattern)) out.push(this.text(path))
+        if (n.type === 'dir')
+          for (const child of Object.keys(n.children).sort())
+            walk(n.children[child], `${path}/${child}`)
+      }
+      walk(node, base)
+      return { lines: out }
+    },
+
+    du: () => ({ lines: [this.text('4.0K\t.')] }),
+
+    df: () => ({
+      lines: [
+        this.text('Filesystem      Size  Used Avail Use% Mounted on', 'dim'),
+        this.text('/dev/harminal    16G  6.2G  9.8G  39% /'),
+        this.text('tmpfs           3.8G  1.2M  3.8G   1% /dev/shm'),
+      ],
+    }),
+
+    free: () => ({
+      lines: [
+        this.text('               total        used        free      shared', 'dim'),
+        this.text('Mem:         8011356     4123980     2891376      148220'),
+        this.text('Swap:        2097148           0     2097148'),
+      ],
+    }),
+
+    ps: () => ({
+      lines: [
+        this.text('  PID TTY          TIME CMD', 'dim'),
+        this.text('  1 pts/0    00:00:01 bash'),
+        this.text('  128 pts/0    00:00:00 ps'),
+      ],
+    }),
+
+    top: () => ({
+      lines: [
+        this.text('Tasks: 2 total, 1 running, 1 sleeping', 'dim'),
+        this.text('%Cpu(s):  3.1 us,  1.2 sy, 95.7 id'),
+        this.text('  PID USER      %CPU %MEM   TIME+ COMMAND', 'yellow', true),
+        this.text('    1 harsh      0.7  1.1  0:01.20 bash'),
+        this.text('  128 harsh      0.3  0.4  0:00.02 top'),
+        this.text(''),
+        this.text('(static snapshot — press q to quit in a real terminal)', 'dim'),
+      ],
+    }),
+
+    kill: (args) => {
+      const pid = args.find((a) => !a.startsWith('-'))
+      if (!pid) return { lines: [this.text('usage: kill [-signal] pid', 'red')] }
+      return { lines: [this.text(`kill: (${pid}) - No such process`, 'red')] }
+    },
+
+    chmod: (args) => {
+      if (args.length < 2) return { lines: [this.text('usage: chmod MODE FILE', 'red')] }
+      return { lines: [] }
+    },
+
+    cal: () => {
+      const d = now()
+      const month = d.toLocaleString('en-US', { month: 'long' })
+      const year = d.getFullYear()
+      const first = new Date(year, d.getMonth(), 1).getDay()
+      const days = new Date(year, d.getMonth() + 1, 0).getDate()
+      const header = `${month} ${year}`
+      const pad = Math.floor((20 - header.length) / 2)
+      const out: Line[] = [
+        this.text(' '.repeat(Math.max(0, pad)) + header, 'green', true),
+        this.text('Su Mo Tu We Th Fr Sa', 'yellow'),
+      ]
+      let row = '   '.repeat(first)
+      for (let day = 1; day <= days; day++) {
+        row += String(day).padStart(2) + ' '
+        if ((first + day) % 7 === 0) {
+          out.push(this.text(row.trimEnd()))
+          row = ''
+        }
+      }
+      if (row.trim()) out.push(this.text(row.trimEnd()))
+      return { lines: out }
+    },
+
+    expr: (args) => {
+      try {
+        const expr = args.join(' ').replace(/[^0-9+\-*/%(). ]/g, '')
+        if (!expr) return { lines: [this.text('expr: syntax error', 'red')] }
+        // eslint-disable-next-line no-new-func
+        const val = Function(`"use strict"; return (${expr})`)()
+        return { lines: [this.text(String(val))] }
+      } catch {
+        return { lines: [this.text('expr: syntax error', 'red')] }
+      }
+    },
+
+    printf: (args) => {
+      const fmt = args[0] ?? ''
+      return { lines: [this.text(fmt.replace(/\\n/g, '\n').replace(/%s/g, () => args.shift() ?? ''))] }
+    },
+
+    yes: (args) => {
+      const msg = args.join(' ') || 'y'
+      return { lines: Array.from({ length: 10 }, () => this.text(msg)) }
+    },
+
+    man: (args) => {
+      const cmd = args[0]
+      if (!cmd) return { lines: [this.text('What manual page do you want?', 'yellow')] }
+      if (!(cmd in this.commands))
+        return { lines: [this.text(`No manual entry for ${cmd}`, 'red')] }
+      return {
+        lines: [
+          this.text(`${cmd.toUpperCase()}(1)`, 'green', true),
+          this.text(''),
+          this.text('NAME', 'yellow', true),
+          this.text(`    ${cmd} — har.minal built-in command`),
+          this.text(''),
+          this.text('DESCRIPTION', 'yellow', true),
+          this.text(`    Run '${cmd}' with appropriate arguments. Type 'help' for an overview.`),
+        ],
+      }
+    },
+
+    sh: (args) => this.runScript(args),
+    bash: (args) => this.runScript(args),
+
+    reset: () => {
+      if (typeof window !== 'undefined') window.localStorage.removeItem(FS_KEY)
+      this.fs = makeFs()
+      this.cwd = HOME
+      return { lines: [this.text('Filesystem reset to defaults.', 'yellow')], clear: true }
+    },
+
     pkg: (args) => this.pkgManager(args),
     apt: (args) => this.pkgManager(args),
 
@@ -564,6 +857,32 @@ export class Shell {
     banner: () => ({ lines: bannerLines() }),
 
     neofetch: () => neofetch(this),
+  }
+
+  private openEditor(args: string[]): ExecResult {
+    const p = args.find((a) => !a.startsWith('-'))
+    if (!p) return { lines: [this.text('usage: nano <file>', 'yellow')] }
+    const node = this.getNode(p)
+    if (node && node.type === 'dir')
+      return { lines: [this.text(`nano: ${p}: Is a directory`, 'red')] }
+    const content = node && node.type === 'file' ? node.content : ''
+    return { lines: [], editor: { path: this.resolve(p), content } }
+  }
+
+  private runScript(args: string[]): ExecResult {
+    const p = args.find((a) => !a.startsWith('-'))
+    if (!p) return { lines: [this.text('bash: no script specified', 'yellow')] }
+    const node = this.getNode(p)
+    if (!node) return { lines: [this.text(`bash: ${p}: No such file or directory`, 'red')] }
+    if (node.type !== 'file') return { lines: [this.text(`bash: ${p}: Is a directory`, 'red')] }
+    const out: Line[] = []
+    for (const raw of node.content.split('\n')) {
+      const line = raw.trim()
+      if (!line || line.startsWith('#')) continue
+      const r = this.runOne(line)
+      out.push(...r.lines)
+    }
+    return { lines: out }
   }
 
   private pkgManager(args: string[]): ExecResult {
